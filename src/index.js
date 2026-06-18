@@ -46,10 +46,10 @@ function hasValidAuth() {
     }
 }
 const path=require("path")
-app.use(express.static(path.join(__dirname,"frontend/dist")))
+app.use(express.static(path.join(__dirname,"..frontend/dist")))
 app.get(/^(?!\\api).*$/,(req,res)=>{
     if(!req.path.startsWith("/api")){
-        res.sendFile(path.join(__dirname,"frontend/dist/index.html"))
+        res.sendFile(path.join(__dirname,"..frontend/dist/index.html"))
     }
 })
 

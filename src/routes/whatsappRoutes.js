@@ -4,7 +4,10 @@ const {
     sendMessage,
     getStatus,
     getQr,
-    reconnectWhatsapp,generateQrController
+    reconnectWhatsapp,
+    generateQrController,
+    getUnreadChats,
+    getMessages
 } = require("../controllers/whatsappController");
 
 const router = express.Router();
@@ -21,4 +24,8 @@ router.post(
     "/generate-qr",
     generateQrController
 );
+
+router.get("/unread", getUnreadChats);
+router.get("/messages", getMessages);
+
 module.exports = router;

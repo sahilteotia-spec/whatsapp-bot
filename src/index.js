@@ -17,7 +17,7 @@ const {
 
 app.use("/api/whatsapp", whatsappRoutes);
 
-app.get("/", (req, res) => {
+app.get("/api/health", (req, res) => {
     res.json({
         success: true,
         service: "WhatsApp Service",
@@ -45,13 +45,18 @@ function hasValidAuth() {
         return false;
     }
 }
-const path=require("path")
-app.use(express.static(path.join(__dirname,"..frontend/dist")))
-app.get(/^(?!\\api).*$/,(req,res)=>{
-    if(!req.path.startsWith("/api")){
-        res.sendFile(path.join(__dirname,"..frontend/dist/index.html"))
+const path = require("path");
+app.use(express.static(path.join(__dirname, "../frontend/dist")));
+app.get("/{*splat}", (req, res) => {
+    if (!req.path.startsWith("/api")) {
+        res.sendFile(path.join(__dirname, "../frontend/dist/index.html"));
+    } else {
+        res.status(404).json({
+            success: false,
+            message: "API endpoint not found"
+        });
     }
-})
+});
 
 const PORT=process.env.PORT||3000;
 app.listen(PORT, async () => {

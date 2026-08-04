@@ -168,13 +168,22 @@ function App() {
 
       {/* ── Reconnect Button (auth exists but disconnected) ── */}
       {showReconnect && (
-        <button
-          onClick={reconnect}
-          disabled={loading}
-          style={styles.btnPrimary}
-        >
-          {loading ? "Reconnecting..." : "🔄 Reconnect"}
-        </button>
+        <div style={{ display: "flex", gap: "12px" }}>
+          <button
+            onClick={reconnect}
+            disabled={loading}
+            style={styles.btnPrimary}
+          >
+            {loading ? "Reconnecting..." : "🔄 Reconnect"}
+          </button>
+          <button
+            onClick={generateQr}
+            disabled={loading}
+            style={styles.btnDanger}
+          >
+            {loading ? "Resetting..." : "🗑️ Reset & Scan QR"}
+          </button>
+        </div>
       )}
 
       {/* ── Generate QR Button (reauth required, no QR yet) ── */}

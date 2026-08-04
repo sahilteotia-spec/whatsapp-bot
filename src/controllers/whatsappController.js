@@ -3,7 +3,8 @@ const {
     getConnectionStatus,
     connectWhatsApp,
     generateQr,
-    hasValidAuth
+    hasValidAuth,
+    store
 } = require("../whatsapp/whatsapp");
 
 // ─── Generate QR ──────────────────────────────────────────────────────────────
@@ -170,10 +171,157 @@ async function reconnectWhatsapp(req, res) {
     }
 }
 
+// ─── Get Unread Chats ────────────────────────────────────────────────────────
+
+async function getUnreadChats(req, res) {
+    try {
+        const unreadChats = store.getUnreadChats();
+        
+        const formatted = unreadChats.map(chat => {
+            const rawMessages = store.getMessages(chat.id, 100);
+            
+            // Format the messages
+            const formattedMessages = rawMessages
+                .map(formatMessage)
+                .filter(m => m !== null && m.text.trim() !== "");
+                
+            // Sort messages in ascending order (oldest first)
+            formattedMessages.sort((a, b) => (a.rawTimestamp || 0) - (b.rawTimestamp || 0));
+
+            // Extract alternate JID and pushName
+            let remoteJidAlt = "";
+            let senderName = chat.name || "";
+            if (rawMessages.length > 0) {
+                const withAlt = rawMessages.find(m => m.key?.remoteJidAlt);
+                if (withAlt) {
+                    remoteJidAlt = withAlt.key.remoteJidAlt;
+                }
+                const withPush = rawMessages.find(m => m.pushName);
+                if (withPush) {
+                    senderName = senderName || withPush.pushName;
+                }
+            }
+            
+            let phoneJid = remoteJidAlt || chat.id || "";
+            let phone = phoneJid.split("@")[0];
+
+            return {
+                chatId: chat.id,
+                remoteJidAlt,
+                phone,
+                unreadCount: chat.unreadCount || 0,
+                senderName: senderName || "Contact",
+                messages: formattedMessages
+            };
+        });
+
+        res.json({
+            success: true,
+            data: formatted
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+}
+
+// ─── Get Messages for a JID/Phone ───────────────────────────────────────────
+
+// Helper to format raw Baileys messages into clean, readable objects
+function formatMessage(msg) {
+    if (!msg) return null;
+    
+    // Extract text from various message structures
+    let text = "";
+    if (msg.message) {
+        text = msg.message.conversation ||
+               msg.message.extendedTextMessage?.text ||
+               msg.message.imageMessage?.caption ||
+               msg.message.videoMessage?.caption ||
+               "";
+    }
+    
+    // Convert Unix timestamp to human-readable local time
+    let readableTime = "";
+    if (msg.messageTimestamp) {
+        const ts = parseInt(msg.messageTimestamp);
+        if (!isNaN(ts)) {
+            readableTime = new Date(ts * 1000).toLocaleString();
+        }
+    }
+    
+    const fromMe = msg.key?.fromMe ?? false;
+    const sender = fromMe ? "Me" : (msg.pushName || "Contact");
+    
+    let phoneJid = msg.key?.remoteJidAlt || msg.key?.remoteJid || "";
+    let phone = phoneJid.split("@")[0];
+    
+    return {
+        messageId: msg.key?.id || "",
+        fromMe,
+        sender,
+        phone,
+        text,
+        timestamp: readableTime,
+        rawTimestamp: msg.messageTimestamp
+    };
+}
+
+async function getMessages(req, res) {
+    try {
+        const { jid, phone, format } = req.query;
+        let targetJid = jid;
+        
+        if (!targetJid && phone) {
+            targetJid = phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
+        }
+        
+        if (!targetJid) {
+            return res.status(400).json({
+                success: false,
+                message: "Either jid or phone is required"
+            });
+        }
+        
+        // Retrieve message history from the store
+        const messages = store.getMessages(targetJid, 50); 
+        
+        // Return raw data if format=raw is queried
+        if (format === "raw") {
+            return res.json({
+                success: true,
+                data: messages
+            });
+        }
+        
+        // Format and filter to return only actual text messages
+        const formatted = messages
+            .map(formatMessage)
+            .filter(m => m !== null && m.text.trim() !== "");
+            
+        // Sort in ascending order (oldest first)
+        formatted.sort((a, b) => (a.rawTimestamp || 0) - (b.rawTimestamp || 0));
+
+        res.json({
+            success: true,
+            data: formatted
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+}
+
 module.exports = {
     sendMessage,
     getStatus,
     getQr,
     reconnectWhatsapp,
-    generateQrController
+    generateQrController,
+    getUnreadChats,
+    getMessages
 };

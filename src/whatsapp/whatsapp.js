@@ -13,6 +13,7 @@ const nodemailer = require("nodemailer");
 const store = {
     chats: {},
     messages: {},
+    jidMap: {},
 
     getUnreadChats() {
         const uniqueChats = {};
@@ -29,11 +30,30 @@ const store = {
         return msgs.slice(-count);
     },
 
+    getPhoneJid(jid) {
+        if (!jid) return "";
+        if (jid.endsWith("@s.whatsapp.net")) return jid;
+        if (this.jidMap && this.jidMap[jid]) return this.jidMap[jid];
+        
+        // Scan messages for alternate JID containing the phone number
+        const msgs = this.messages[jid];
+        if (Array.isArray(msgs)) {
+            for (const msg of msgs) {
+                if (msg?.key?.remoteJidAlt) {
+                    this.jidMap[jid] = msg.key.remoteJidAlt;
+                    return msg.key.remoteJidAlt;
+                }
+            }
+        }
+        return "";
+    },
+
     writeToFile(filePath) {
         try {
             fs.writeFileSync(filePath, JSON.stringify({
                 chats: this.chats,
-                messages: this.messages
+                messages: this.messages,
+                jidMap: this.jidMap
             }, null, 2), "utf-8");
         } catch (err) {
             console.error("Failed to write store to file:", err.message);
@@ -46,6 +66,7 @@ const store = {
                 const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
                 this.chats = data.chats || {};
                 this.messages = data.messages || {};
+                this.jidMap = data.jidMap || {};
 
                 // Reconstruct alternate JID links (e.g. lid vs s.whatsapp.net phone number)
                 for (const jid of Object.keys(this.messages)) {
@@ -55,6 +76,10 @@ const store = {
                             if (msg?.key?.remoteJidAlt) {
                                 const altJid = msg.key.remoteJidAlt;
                                 
+                                // Record in JID Map
+                                this.jidMap[jid] = altJid;
+                                this.jidMap[altJid] = jid;
+
                                 // Merge message histories if they are separate arrays
                                 if (this.messages[altJid] !== this.messages[jid]) {
                                     const merged = [...(this.messages[jid] || []), ...(this.messages[altJid] || [])];
@@ -347,8 +372,22 @@ async function connectWhatsApp() {
 
                     if (msg.key.remoteJidAlt) {
                         const altJid = msg.key.remoteJidAlt;
-                        if (!store.messages[altJid]) {
-                            store.messages[altJid] = store.messages[jid];
+                        // Record JID mapping
+                        store.jidMap[jid] = altJid;
+                        store.jidMap[altJid] = jid;
+
+                        if (store.messages[altJid] !== store.messages[jid]) {
+                            const merged = [...(store.messages[jid] || []), ...(store.messages[altJid] || [])];
+                            const unique = [];
+                            const seenIds = new Set();
+                            for (const m of merged) {
+                                if (m?.key?.id && !seenIds.has(m.key.id)) {
+                                    seenIds.add(m.key.id);
+                                    unique.push(m);
+                                }
+                            }
+                            store.messages[jid] = unique;
+                            store.messages[altJid] = unique;
                         }
                     }
                 }
@@ -377,6 +416,10 @@ async function connectWhatsApp() {
                 // Link alternate JID to reference the same array, merging any existing history
                 if (msg.key.remoteJidAlt) {
                     const altJid = msg.key.remoteJidAlt;
+                    // Record JID mapping
+                    store.jidMap[jid] = altJid;
+                    store.jidMap[altJid] = jid;
+
                     if (store.messages[altJid] !== store.messages[jid]) {
                         const merged = [...(store.messages[jid] || []), ...(store.messages[altJid] || [])];
                         const unique = [];

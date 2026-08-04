@@ -186,16 +186,16 @@ async function getUnreadChats(req, res) {
                 .filter(m => m !== null && m.text.trim() !== "");
                 
             // Sort messages in ascending order (oldest first)
-            formattedMessages.sort((a, b) => (a.rawTimestamp || 0) - (b.rawTimestamp || 0));
+            formattedMessages.sort((a, b) => {
+                const tA = getTimestampSeconds(a.rawTimestamp);
+                const tB = getTimestampSeconds(b.rawTimestamp);
+                return tA - tB;
+            });
 
-            // Extract alternate JID and pushName
-            let remoteJidAlt = "";
+            // Resolve alternate JID and pushName
+            let remoteJidAlt = store.getPhoneJid(chat.id) || "";
             let senderName = chat.name || "";
             if (rawMessages.length > 0) {
-                const withAlt = rawMessages.find(m => m.key?.remoteJidAlt);
-                if (withAlt) {
-                    remoteJidAlt = withAlt.key.remoteJidAlt;
-                }
                 const withPush = rawMessages.find(m => m.pushName);
                 if (withPush) {
                     senderName = senderName || withPush.pushName;
@@ -229,6 +229,15 @@ async function getUnreadChats(req, res) {
 
 // ─── Get Messages for a JID/Phone ───────────────────────────────────────────
 
+// Helper to parse Unix timestamp from Baileys which can be a number, string, or Protobuf Long object
+function getTimestampSeconds(timestamp) {
+    if (!timestamp) return 0;
+    if (typeof timestamp === "object") {
+        return typeof timestamp.low === "number" ? timestamp.low : 0;
+    }
+    return parseInt(timestamp, 10) || 0;
+}
+
 // Helper to format raw Baileys messages into clean, readable objects
 function formatMessage(msg) {
     if (!msg) return null;
@@ -245,17 +254,15 @@ function formatMessage(msg) {
     
     // Convert Unix timestamp to human-readable local time
     let readableTime = "";
-    if (msg.messageTimestamp) {
-        const ts = parseInt(msg.messageTimestamp);
-        if (!isNaN(ts)) {
-            readableTime = new Date(ts * 1000).toLocaleString();
-        }
+    const seconds = getTimestampSeconds(msg.messageTimestamp);
+    if (seconds > 0) {
+        readableTime = new Date(seconds * 1000).toLocaleString();
     }
     
     const fromMe = msg.key?.fromMe ?? false;
     const sender = fromMe ? "Me" : (msg.pushName || "Contact");
     
-    let phoneJid = msg.key?.remoteJidAlt || msg.key?.remoteJid || "";
+    let phoneJid = store.getPhoneJid(msg.key?.remoteJid) || msg.key?.remoteJidAlt || msg.key?.remoteJid || "";
     let phone = phoneJid.split("@")[0];
     
     return {
@@ -302,7 +309,11 @@ async function getMessages(req, res) {
             .filter(m => m !== null && m.text.trim() !== "");
             
         // Sort in ascending order (oldest first)
-        formatted.sort((a, b) => (a.rawTimestamp || 0) - (b.rawTimestamp || 0));
+        formatted.sort((a, b) => {
+            const tA = getTimestampSeconds(a.rawTimestamp);
+            const tB = getTimestampSeconds(b.rawTimestamp);
+            return tA - tB;
+        });
 
         res.json({
             success: true,

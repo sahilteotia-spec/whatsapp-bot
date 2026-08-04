@@ -13,6 +13,7 @@ const nodemailer = require("nodemailer");
 const store = {
     chats: {},
     messages: {},
+    contacts: {},
     jidMap: {},
 
     getUnreadChats() {
@@ -53,6 +54,7 @@ const store = {
             fs.writeFileSync(filePath, JSON.stringify({
                 chats: this.chats,
                 messages: this.messages,
+                contacts: this.contacts,
                 jidMap: this.jidMap
             }, null, 2), "utf-8");
         } catch (err) {
@@ -66,6 +68,7 @@ const store = {
                 const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
                 this.chats = data.chats || {};
                 this.messages = data.messages || {};
+                this.contacts = data.contacts || {};
                 this.jidMap = data.jidMap || {};
 
                 // Reconstruct alternate JID links (e.g. lid vs s.whatsapp.net phone number)
@@ -341,7 +344,37 @@ async function connectWhatsApp() {
             }
         });
 
-        sock.ev.on("messaging-history.set", ({ chats: syncedChats, messages: syncedMessages }) => {
+        sock.ev.on("contacts.upsert", (newContacts) => {
+            for (const contact of newContacts) {
+                if (!store.contacts[contact.id]) {
+                    store.contacts[contact.id] = contact;
+                } else {
+                    Object.assign(store.contacts[contact.id], contact);
+                }
+            }
+        });
+
+        sock.ev.on("contacts.update", (contactUpdates) => {
+            for (const update of contactUpdates) {
+                if (store.contacts[update.id]) {
+                    Object.assign(store.contacts[update.id], update);
+                } else {
+                    store.contacts[update.id] = update;
+                }
+            }
+        });
+
+        sock.ev.on("messaging-history.set", ({ chats: syncedChats, messages: syncedMessages, contacts: syncedContacts }) => {
+            if (Array.isArray(syncedContacts)) {
+                for (const contact of syncedContacts) {
+                    if (!store.contacts[contact.id]) {
+                        store.contacts[contact.id] = contact;
+                    } else {
+                        Object.assign(store.contacts[contact.id], contact);
+                    }
+                }
+            }
+
             if (Array.isArray(syncedChats)) {
                 for (const chat of syncedChats) {
                     if (!store.chats[chat.id]) {

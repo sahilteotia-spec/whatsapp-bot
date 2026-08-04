@@ -185,20 +185,22 @@ async function getUnreadChats(req, res) {
                 .map(formatMessage)
                 .filter(m => m !== null && m.text.trim() !== "");
                 
-            // Sort messages in ascending order (oldest first)
+            // Sort messages in descending order (newest first)
             formattedMessages.sort((a, b) => {
                 const tA = getTimestampSeconds(a.rawTimestamp);
                 const tB = getTimestampSeconds(b.rawTimestamp);
-                return tA - tB;
+                return tB - tA;
             });
 
-            // Resolve alternate JID and pushName
+            // Resolve alternate JID
             let remoteJidAlt = store.getPhoneJid(chat.id) || "";
-            let senderName = chat.name || "";
-            if (rawMessages.length > 0) {
+            
+            // Resolve contact name from the contacts database
+            let senderName = getContactName(chat.id, remoteJidAlt) || chat.name || "";
+            if (!senderName && rawMessages.length > 0) {
                 const withPush = rawMessages.find(m => m.pushName);
                 if (withPush) {
-                    senderName = senderName || withPush.pushName;
+                    senderName = withPush.pushName;
                 }
             }
             
@@ -238,6 +240,13 @@ function getTimestampSeconds(timestamp) {
     return parseInt(timestamp, 10) || 0;
 }
 
+// Helper to retrieve contact name from cached contacts
+function getContactName(jid, altJid) {
+    if (!store.contacts) return "";
+    const contact = store.contacts[jid] || (altJid && store.contacts[altJid]) || {};
+    return contact.name || contact.verifiedName || contact.notify || "";
+}
+
 // Helper to format raw Baileys messages into clean, readable objects
 function formatMessage(msg) {
     if (!msg) return null;
@@ -260,10 +269,15 @@ function formatMessage(msg) {
     }
     
     const fromMe = msg.key?.fromMe ?? false;
-    const sender = fromMe ? "Me" : (msg.pushName || "Contact");
-    
     let phoneJid = store.getPhoneJid(msg.key?.remoteJid) || msg.key?.remoteJidAlt || msg.key?.remoteJid || "";
     let phone = phoneJid.split("@")[0];
+
+    let sender = "Contact";
+    if (fromMe) {
+        sender = "Me";
+    } else {
+        sender = getContactName(msg.key?.remoteJid, phoneJid) || msg.pushName || "Contact";
+    }
     
     return {
         messageId: msg.key?.id || "",
@@ -308,11 +322,11 @@ async function getMessages(req, res) {
             .map(formatMessage)
             .filter(m => m !== null && m.text.trim() !== "");
             
-        // Sort in ascending order (oldest first)
+        // Sort in descending order (newest first)
         formatted.sort((a, b) => {
             const tA = getTimestampSeconds(a.rawTimestamp);
             const tB = getTimestampSeconds(b.rawTimestamp);
-            return tA - tB;
+            return tB - tA;
         });
 
         res.json({

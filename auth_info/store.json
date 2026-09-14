@@ -9717,5 +9717,10 @@
         "isMentionedInStatus": false
       }
     ]
+  },
+  "contacts": {},
+  "jidMap": {
+    "160528899031047@lid": "919368408191@s.whatsapp.net",
+    "919368408191@s.whatsapp.net": "919368408191@s.whatsapp.net"
   }
 }

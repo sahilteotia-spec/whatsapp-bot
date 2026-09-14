@@ -2,7 +2,9 @@ const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
-    fetchLatestBaileysVersion
+    fetchLatestBaileysVersion,
+    fetchLatestWaWebVersion,
+    Browsers
 } = require("@whiskeysockets/baileys");
 
 const P = require("pino");
@@ -145,6 +147,7 @@ setInterval(() => {
 let sock = null;
 let reconnectAttempts = 0;
 let isConnecting = false;
+let reconnectTimer = null;
 
 const connectionStatus = {
     connected: false,
@@ -168,7 +171,7 @@ function hasValidAuth() {
         const content = fs.readFileSync(credsPath, "utf-8").trim();
         if (!content || content === "{}") return false;
         const parsed = JSON.parse(content);
-        return Object.keys(parsed).length > 0;
+        return Boolean(parsed.registered && parsed.me && parsed.me.id);
     } catch {
         return false;
     }
@@ -188,12 +191,17 @@ function requiresReAuth(reason) {
 function clearAuthInfo() {
     try {
         if (!fs.existsSync("./auth_info")) {
-            fs.mkdirSync("./auth_info");
+            fs.mkdirSync("./auth_info", { recursive: true });
             return;
         }
         const files = fs.readdirSync("./auth_info");
         for (const file of files) {
-            fs.unlinkSync(`./auth_info/${file}`);
+            if (file === "store.json") continue; // Preserve cached chat store
+            try {
+                fs.unlinkSync(`./auth_info/${file}`);
+            } catch (e) {
+                console.warn(`Failed to remove ./auth_info/${file}:`, e.message);
+            }
         }
         console.log("Auth info cleared.");
     } catch (err) {
@@ -262,14 +270,33 @@ async function sendDisconnectEmail(reason) {
 async function generateQr() {
     console.log("Generating QR — clearing old auth...");
 
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+
+    // Clean up existing socket if present
+    if (sock) {
+        try {
+            sock.ev.removeAllListeners();
+            sock.end(undefined);
+            sock.ws?.close();
+        } catch (e) {
+            console.warn("Cleanup existing socket in generateQr:", e.message);
+        }
+        sock = null;
+    }
+
     // Clear broken/old auth so Baileys shows fresh QR
     clearAuthInfo();
 
     // Reset state
+    connectionStatus.connected = false;
     connectionStatus.qr = null;
     connectionStatus.reAuthRequired = true;
     connectionStatus.state = "REAUTH_REQUIRED";
     connectionStatus.error = null;
+    reconnectAttempts = 0;
     isConnecting = false; // Reset so connectWhatsApp can proceed
 
     await connectWhatsApp();
@@ -284,30 +311,57 @@ async function connectWhatsApp() {
         return;
     }
 
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+
     try {
         isConnecting = true;
         connectionStatus.state = "CONNECTING";
 
+        // Clean up previous socket if it exists
+        if (sock) {
+            try {
+                sock.ev.removeAllListeners();
+                sock.end(undefined);
+                sock.ws?.close();
+            } catch (e) {
+                console.warn("Cleanup existing socket before connect:", e.message);
+            }
+            sock = null;
+        }
+
         const { state, saveCreds } =
             await useMultiFileAuthState("auth_info");
 
-        let version = [2, 3000, 1015901307]; // fallback default
+        let version = [2, 3000, 1047441584]; // modern default fallback
         try {
-            const { version: fetchedVersion } = await fetchLatestBaileysVersion();
+            const { version: fetchedVersion } = await fetchLatestWaWebVersion();
             version = fetchedVersion;
             console.log(`Using WhatsApp Web version: ${version.join(".")}`);
         } catch (err) {
-            console.warn("Failed to fetch latest Baileys version, using default fallback:", err.message);
+            try {
+                const { version: fetchedVersion } = await fetchLatestBaileysVersion();
+                version = fetchedVersion;
+                console.log(`Using Baileys fallback version: ${version.join(".")}`);
+            } catch (e) {
+                console.warn("Using default fallback version:", version.join("."));
+            }
         }
 
         sock = makeWASocket({
             auth: state,
             version,
             logger: P({ level: "silent" }),
-            browser: ["Chrome", "Windows", "10"],
+            browser: Browsers.windows("Desktop"),
             markOnlineOnConnect: false,
-            syncFullHistory: true,
-            shouldSyncHistoryMessage: () => true
+            syncFullHistory: false,
+            shouldSyncHistoryMessage: () => true,
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 60000,
+            keepAliveIntervalMs: 30000,
+            qrTimeout: 40000
         });
 
         // Bind custom store events
@@ -556,6 +610,10 @@ async function connectWhatsApp() {
 
             if (connection === "open") {
                 reconnectAttempts = 0;
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
                 connectionStatus.connected = true;
                 connectionStatus.reconnectAttempts = 0;
                 connectionStatus.error = null;
@@ -570,12 +628,7 @@ async function connectWhatsApp() {
             if (connection === "close") {
                 isConnecting = false;
 
-                // Guard — if already in reauth state, ignore further close events
-                if (connectionStatus.state === "REAUTH_REQUIRED") {
-                    console.log("Already in REAUTH_REQUIRED — ignoring close event.");
-                    return;
-                }
-
+                const wasConnected = connectionStatus.connected;
                 const reason = lastDisconnect?.error?.output?.statusCode;
                 const fullError = lastDisconnect?.error;
 
@@ -587,16 +640,37 @@ async function connectWhatsApp() {
                 connectionStatus.lastDisconnectMessage = fullError?.message || null;
                 connectionStatus.error = fullError?.message || `Disconnected (${reason})`;
 
-                // Send email alert on disconnect
-                await sendDisconnectEmail(reason || "Unknown status code");
+                // Send email alert only if the bot was actively connected beforehand
+                if (wasConnected) {
+                    await sendDisconnectEmail(reason || "Unknown status code");
+                }
 
-                // Needs full re-login
+                // WhatsApp stream restart required (code 515) - normal part of pairing handshake
+                if (reason === DisconnectReason.restartRequired) {
+                    console.log("Stream restart required by WhatsApp (515). Reconnecting immediately...");
+                    connectionStatus.state = "CONNECTING";
+                    reconnectTimer = setTimeout(async () => {
+                        await connectWhatsApp();
+                    }, 500);
+                    return;
+                }
+
+                // Needs full re-login (logged out / forbidden)
                 if (requiresReAuth(reason)) {
                     connectionStatus.reAuthRequired = true;
                     connectionStatus.state = "REAUTH_REQUIRED";
                     connectionStatus.qr = null;
-                    console.log("Session expired. QR scan required.");
+                    clearAuthInfo();
+                    console.log("Session expired or logged out. QR scan required.");
                     await notifyReAuthRequired(reason);
+                    return;
+                }
+
+                // QR timeout while waiting for scan
+                if (reason === DisconnectReason.timedOut && !hasValidAuth()) {
+                    console.log("QR timeout without scan. Waiting for fresh QR request.");
+                    connectionStatus.reAuthRequired = true;
+                    connectionStatus.state = "REAUTH_REQUIRED";
                     return;
                 }
 
@@ -617,7 +691,7 @@ async function connectWhatsApp() {
                     connectionStatus.reconnectAttempts = reconnectAttempts;
                     connectionStatus.state = "RECONNECTING";
                     console.log(`Reconnect attempt ${reconnectAttempts}...`);
-                    setTimeout(async () => {
+                    reconnectTimer = setTimeout(async () => {
                         await connectWhatsApp();
                     }, 5000);
                 } else {

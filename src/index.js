@@ -12,7 +12,8 @@ const whatsappRoutes = require("./routes/whatsappRoutes");
 
 const {
     connectWhatsApp,
-    getConnectionStatus
+    getConnectionStatus,
+    hasValidAuth
 } = require("./whatsapp/whatsapp");
 
 app.use("/api/whatsapp", whatsappRoutes);
@@ -25,26 +26,6 @@ app.get("/api/health", (req, res) => {
     });
 });
 
-function hasValidAuth() {
-    try {
-        const credsPath = "./auth_info/creds.json";
-
-        if (!fs.existsSync(credsPath)) return false;
-
-        const content = fs.readFileSync(credsPath, "utf-8").trim();
-
-        if (!content || content === "{}") return false;
-
-        const parsed = JSON.parse(content);
-
-        // Must have actual keys inside
-        return Object.keys(parsed).length > 0;
-
-    } catch (err) {
-        console.log("Auth check failed:", err.message);
-        return false;
-    }
-}
 const path = require("path");
 app.use(express.static(path.join(__dirname, "../frontend/dist")));
 app.get("/{*splat}", (req, res) => {

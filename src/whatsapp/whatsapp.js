@@ -166,12 +166,13 @@ const connectionStatus = {
 
 function hasValidAuth() {
     try {
+        if (sock?.authState?.creds?.me?.id) return true;
         const credsPath = "./auth_info/creds.json";
         if (!fs.existsSync(credsPath)) return false;
         const content = fs.readFileSync(credsPath, "utf-8").trim();
         if (!content || content === "{}") return false;
         const parsed = JSON.parse(content);
-        return Boolean(parsed.registered && parsed.me && parsed.me.id);
+        return Boolean(parsed.me && parsed.me.id);
     } catch {
         return false;
     }

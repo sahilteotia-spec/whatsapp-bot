@@ -7,7 +7,8 @@ const {
     reconnectWhatsapp,
     generateQrController,
     getUnreadChats,
-    getMessages
+    getMessages,
+    debugAuth
 } = require("../controllers/whatsappController");
 
 const router = express.Router();
@@ -17,6 +18,8 @@ router.post("/send", sendMessage);
 router.get("/status", getStatus);
 
 router.get("/qr", getQr);
+
+router.get("/debug", debugAuth);
 
 router.post("/reconnect", reconnectWhatsapp);
 

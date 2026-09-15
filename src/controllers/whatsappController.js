@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const {
     getSocket,
     getConnectionStatus,
@@ -341,6 +343,72 @@ async function getMessages(req, res) {
     }
 }
 
+// ─── Debug Auth & Volume Status ───────────────────────────────────────────────
+
+async function debugAuth(req, res) {
+    try {
+        const cwd = process.cwd();
+        const credsPath = path.resolve("./auth_info/creds.json");
+        const authDir = path.resolve("./auth_info");
+        const rootAuthDir = "/auth_info";
+        let dirExists = fs.existsSync(authDir);
+        let rootDirExists = fs.existsSync(rootAuthDir);
+        let files = [];
+        let rootFiles = [];
+        let credsExists = fs.existsSync(credsPath);
+        let credsError = null;
+        let parsed = null;
+
+        if (dirExists) {
+            try {
+                files = fs.readdirSync(authDir);
+            } catch (e) {
+                files = [e.message];
+            }
+        }
+
+        if (rootDirExists) {
+            try {
+                rootFiles = fs.readdirSync(rootAuthDir);
+            } catch (e) {
+                rootFiles = [e.message];
+            }
+        }
+
+        if (credsExists) {
+            try {
+                const content = fs.readFileSync(credsPath, "utf-8");
+                parsed = JSON.parse(content);
+            } catch (e) {
+                credsError = e.message;
+            }
+        }
+
+        res.json({
+            success: true,
+            cwd,
+            authDir,
+            credsPath,
+            dirExists,
+            totalFilesInAuthDir: files.length,
+            sampleFilesInAuthDir: files.slice(0, 15),
+            rootDirExists,
+            sampleFilesInRootDir: rootFiles.slice(0, 15),
+            credsExists,
+            credsError,
+            hasMe: Boolean(parsed?.me),
+            meId: parsed?.me?.id || null,
+            registered: parsed?.registered,
+            validAuth: hasValidAuth()
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+}
+
 module.exports = {
     sendMessage,
     getStatus,
@@ -348,5 +416,6 @@ module.exports = {
     reconnectWhatsapp,
     generateQrController,
     getUnreadChats,
-    getMessages
+    getMessages,
+    debugAuth
 };
